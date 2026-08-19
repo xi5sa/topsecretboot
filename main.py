@@ -59,36 +59,75 @@ logger = logging.getLogger(__name__)
 USERS_FILE = "users.json"
 BANNED_FILE = "banned.json"
 STARTED_USERS_FILE = "started_users.json"
+CHANNEL_MESSAGES_FILE = "channel_messages.json"
 
 
 # =========================================================
-# DEFAULT DATA
+# JSON FUNCTIONS
 # =========================================================
 
 def load_json(filename, default):
+
     if not os.path.exists(filename):
         return default
 
     try:
         with open(filename, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+
+    except Exception as e:
+
+        logger.error(
+            f"Failed to load {filename}: {e}"
+        )
+
         return default
 
 
 def save_json(filename, data):
-    with open(filename, "w", encoding="utf-8") as f:
-        json.dump(
-            data,
-            f,
-            ensure_ascii=False,
-            indent=2,
+
+    try:
+
+        with open(filename, "w", encoding="utf-8") as f:
+
+            json.dump(
+                data,
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+
+    except Exception as e:
+
+        logger.error(
+            f"Failed to save {filename}: {e}"
         )
 
 
-users = load_json(USERS_FILE, {})
-banned_users = load_json(BANNED_FILE, {})
-started_users = load_json(STARTED_USERS_FILE, {})
+# =========================================================
+# DATA
+# =========================================================
+
+users = load_json(
+    USERS_FILE,
+    {}
+)
+
+banned_users = load_json(
+    BANNED_FILE,
+    {}
+)
+
+started_users = load_json(
+    STARTED_USERS_FILE,
+    {}
+)
+
+# channel message ID -> user ID
+channel_messages = load_json(
+    CHANNEL_MESSAGES_FILE,
+    {}
+)
 
 
 # =========================================================
@@ -97,13 +136,15 @@ started_users = load_json(STARTED_USERS_FILE, {})
 
 bot_enabled = True
 
-# user_id -> target_user_id
+# Admin active private chat
+# ADMIN_ID -> USER_ID
 active_chats = {}
 
-# admin_message_id -> user_id
+# Admin message ID -> USER_ID
 message_map = {}
 
-# user_id -> user_number
+# Users who used private mode
+# USER_ID -> USER_NUMBER
 private_chat_users = {}
 
 
@@ -148,12 +189,16 @@ bad_words = [
 
 
 def contains_bad_words(text: str) -> bool:
+
     if not text:
         return False
 
     text = text.lower()
 
-    return any(word.lower() in text for word in bad_words)
+    return any(
+        word.lower() in text
+        for word in bad_words
+    )
 
 
 # =========================================================
@@ -164,7 +209,7 @@ WELCOME_MSG = """نورت يا عسل 🌟
 
 صل على النبي ❤️
 
-بوت تواصل لـ Just for fun
+بوت تواصل مخصص للقناة.
 
 🔽 اختر نوع الإرسال:
 
@@ -172,14 +217,13 @@ WELCOME_MSG = """نورت يا عسل 🌟
 رسالتك تظهر في القناة.
 
 🔒 الوضع الخاص:
-رسالتك تصل فقط لـ عزو.
-
+رسالتك تصل فقط للإدارة.
 """
 
 
 COMMANDS_MSG = """📜 أوامر الأدمن:
 
-/on - تشغيل البوت
+/on - تشغيل الوضع العام
 /off - إيقاف الوضع العام
 /ban [رقم] - حظر مستخدم
 /unban [رمز] - فك الحظر
@@ -190,7 +234,7 @@ COMMANDS_MSG = """📜 أوامر الأدمن:
 
 
 # =========================================================
-# KEYBOARD
+# BUTTONS
 # =========================================================
 
 def get_mode_buttons():
@@ -221,7 +265,7 @@ def is_admin(user_id):
 
 
 # =========================================================
-# BANNED CHECK
+# BAN CHECK
 # =========================================================
 
 def is_banned(user_id):
@@ -246,43 +290,71 @@ def get_user_number(user_id):
 
     if user_id not in users:
 
-        numbers = [
-            int(data["number"])
-            for data in users.values()
-            if "number" in data
-        ]
+        numbers = []
 
-        next_number = max(numbers, default=0) + 1
+        for data in users.values():
+
+            if "number" in data:
+
+                try:
+                    numbers.append(
+                        int(data["number"])
+                    )
+
+                except:
+                    pass
+
+        next_number = max(
+            numbers,
+            default=0
+        ) + 1
 
         users[user_id] = {
             "number": next_number,
             "messages": 0,
+            "public_messages": 0,
+            "private_messages": 0,
             "mode": None,
         }
 
-        save_json(USERS_FILE, users)
+        save_json(
+            USERS_FILE,
+            users
+        )
 
-    return int(users[user_id]["number"])
+    return int(
+        users[user_id]["number"]
+    )
 
 
 # =========================================================
 # START
 # =========================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     if not update.effective_user:
         return
 
     user = update.effective_user
+
     user_id = str(user.id)
 
     started_users[user_id] = True
-    save_json(STARTED_USERS_FILE, started_users)
+
+    save_json(
+        STARTED_USERS_FILE,
+        started_users
+    )
 
     get_user_number(user_id)
 
-    await update.message.reply_text(WELCOME_MSG)
+    await update.message.reply_text(
+        WELCOME_MSG
+    )
 
     if is_admin(user.id):
 
@@ -297,7 +369,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# BUTTONS
+# MODE BUTTON
 # =========================================================
 
 async def handle_button(
@@ -310,24 +382,18 @@ async def handle_button(
     if not query:
         return
 
-    user = query.from_user
-
     await query.answer()
+
+    user = query.from_user
 
     user_id = str(user.id)
 
-    if user_id not in started_users:
-
-        started_users[user_id] = True
-        save_json(
-            STARTED_USERS_FILE,
-            started_users
-        )
-
-    # MODE
     if query.data.startswith("mode_"):
 
-        mode = query.data.split("_", 1)[1]
+        mode = query.data.split(
+            "_",
+            1
+        )[1]
 
         get_user_number(user_id)
 
@@ -338,16 +404,19 @@ async def handle_button(
             users
         )
 
-        mode_name = (
-            "العام 🟢"
-            if mode == "public"
-            else "الخاص 🔒"
-        )
+        if mode == "public":
 
-        await query.message.reply_text(
-            f"✅ تم اختيار الوضع {mode_name}.\n\n"
-            "📨 أرسل رسالتك الآن."
-        )
+            await query.message.reply_text(
+                "✅ تم تفعيل 🟢 الوضع العام.\n\n"
+                "📨 أرسل رسالتك الآن."
+            )
+
+        else:
+
+            await query.message.reply_text(
+                "✅ تم تفعيل 🔒 الوضع الخاص.\n\n"
+                "📨 أرسل رسالتك الآن."
+            )
 
 
 # =========================================================
@@ -361,13 +430,15 @@ async def enable_bot(
 
     global bot_enabled
 
-    if not is_admin(update.effective_user.id):
+    if not is_admin(
+        update.effective_user.id
+    ):
         return
 
     bot_enabled = True
 
     await update.message.reply_text(
-        "✅ تم تفعيل استقبال الرسائل العامة."
+        "✅ تم تفعيل الوضع العام."
     )
 
 
@@ -382,15 +453,32 @@ async def disable_bot(
 
     global bot_enabled
 
-    if not is_admin(update.effective_user.id):
+    if not is_admin(
+        update.effective_user.id
+    ):
         return
 
     bot_enabled = False
 
     await update.message.reply_text(
-        "⛔️ تم إيقاف استقبال الرسائل في الوضع العام.\n"
+        "⛔️ تم إيقاف الوضع العام.\n"
         "🔒 الوضع الخاص ما زال يعمل."
     )
+
+
+# =========================================================
+# BAN CODE
+# =========================================================
+
+def generate_unique_code():
+
+    while True:
+
+        code = f"{random.randint(0, 999):03d}"
+
+        if code not in banned_users:
+
+            return code
 
 
 # =========================================================
@@ -402,7 +490,9 @@ async def ban_user(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    if not is_admin(update.effective_user.id):
+    if not is_admin(
+        update.effective_user.id
+    ):
         return
 
     if not context.args:
@@ -432,9 +522,12 @@ async def ban_user(
 
     for uid, data in users.items():
 
-        if int(data.get("number", 0)) == target_number:
+        if int(
+            data.get("number", 0)
+        ) == target_number:
 
             target_uid = uid
+
             break
 
     if not target_uid:
@@ -458,24 +551,10 @@ async def ban_user(
     )
 
     await update.message.reply_text(
-        f"🚫 تم حظر المتابع رقم {target_number:02d}\n\n"
+        f"🚫 تم حظر المتابع رقم "
+        f"{target_number:02d}\n\n"
         f"🔑 رمز الحظر: {code}"
     )
-
-
-# =========================================================
-# GENERATE BAN CODE
-# =========================================================
-
-def generate_unique_code():
-
-    while True:
-
-        code = f"{random.randint(0, 999):03d}"
-
-        if code not in banned_users:
-
-            return code
 
 
 # =========================================================
@@ -487,7 +566,9 @@ async def unban_user(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    if not is_admin(update.effective_user.id):
+    if not is_admin(
+        update.effective_user.id
+    ):
         return
 
     if not context.args:
@@ -523,7 +604,7 @@ async def unban_user(
 
 
 # =========================================================
-# SEND MESSAGE TO USER
+# SEND ANY MESSAGE TO USER
 # =========================================================
 
 async def send_to_user(
@@ -585,7 +666,129 @@ async def send_to_user(
 
 
 # =========================================================
-# HANDLE MESSAGES
+# ADMIN REPLY TO CHANNEL MESSAGE
+# =========================================================
+
+async def handle_channel_post(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    """
+    يتعامل مع المنشورات والردود داخل القناة.
+
+    عندما يرد الأدمن على رسالة البوت في القناة:
+    يبحث عن user_id المرتبط بالرسالة الأصلية
+    ثم يرسل الرد للمستخدم في الخاص.
+    """
+
+    if not update.channel_post:
+        return
+
+    message = update.channel_post
+
+    # لا يوجد Reply
+    if not message.reply_to_message:
+        return
+
+    original_message_id = (
+        message.reply_to_message.message_id
+    )
+
+    target_uid = channel_messages.get(
+        str(original_message_id)
+    )
+
+    if not target_uid:
+        logger.warning(
+            "Channel reply received but "
+            "original user was not found."
+        )
+
+        return
+
+    try:
+
+        # نص
+        if message.text:
+
+            await context.bot.send_message(
+                chat_id=int(target_uid),
+                text=(
+                    "📩 رد الإدارة:\n\n"
+                    f"{message.text}"
+                )
+            )
+
+        # صورة
+        elif message.photo:
+
+            await context.bot.send_photo(
+                chat_id=int(target_uid),
+                photo=message.photo[-1].file_id,
+                caption=(
+                    "📩 رد الإدارة\n\n"
+                    f"{message.caption or ''}"
+                )
+            )
+
+        # فيديو
+        elif message.video:
+
+            await context.bot.send_video(
+                chat_id=int(target_uid),
+                video=message.video.file_id,
+                caption=(
+                    "📩 رد الإدارة\n\n"
+                    f"{message.caption or ''}"
+                )
+            )
+
+        # Voice
+        elif message.voice:
+
+            await context.bot.send_voice(
+                chat_id=int(target_uid),
+                voice=message.voice.file_id
+            )
+
+        # Audio
+        elif message.audio:
+
+            await context.bot.send_audio(
+                chat_id=int(target_uid),
+                audio=message.audio.file_id,
+                caption=(
+                    "📩 رد الإدارة\n\n"
+                    f"{message.caption or ''}"
+                )
+            )
+
+        # Document
+        elif message.document:
+
+            await context.bot.send_document(
+                chat_id=int(target_uid),
+                document=message.document.file_id,
+                caption=(
+                    "📩 رد الإدارة\n\n"
+                    f"{message.caption or ''}"
+                )
+            )
+
+        logger.info(
+            f"Admin reply sent to user {target_uid}"
+        )
+
+    except Exception as e:
+
+        logger.exception(
+            f"Failed to send channel reply: {e}"
+        )
+
+
+# =========================================================
+# HANDLE NORMAL MESSAGES
 # =========================================================
 
 async def handle_message(
@@ -593,7 +796,10 @@ async def handle_message(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    if not update.effective_user or not update.message:
+    if not update.effective_user:
+        return
+
+    if not update.message:
         return
 
     user = update.effective_user
@@ -606,7 +812,10 @@ async def handle_message(
 
     if is_admin(user.id):
 
-        # Active private chat
+        # -------------------------------------------------
+        # Active chat
+        # -------------------------------------------------
+
         if user_id in active_chats:
 
             target_uid = active_chats[user_id]
@@ -633,7 +842,10 @@ async def handle_message(
 
                 return
 
-        # Reply to a private message
+        # -------------------------------------------------
+        # Reply to private message
+        # -------------------------------------------------
+
         if update.message.reply_to_message:
 
             replied_id = (
@@ -671,7 +883,8 @@ async def handle_message(
                     return
 
         await update.message.reply_text(
-            "ℹ️ للرد على متابع، استخدم Reply على رسالته."
+            "ℹ️ للرد على متابع، استخدم Reply "
+            "على رسالته."
         )
 
         return
@@ -703,7 +916,9 @@ async def handle_message(
     # USER NUMBER
     # =====================================================
 
-    user_num = get_user_number(user_id)
+    user_num = get_user_number(
+        user_id
+    )
 
     # =====================================================
     # MODE
@@ -727,7 +942,10 @@ async def handle_message(
     # GENERAL OFF
     # =====================================================
 
-    if not bot_enabled and mode == "public":
+    if (
+        not bot_enabled
+        and mode == "public"
+    ):
 
         await update.message.reply_text(
             "⛔️ الوضع العام مغلق حاليًا.\n"
@@ -746,47 +964,101 @@ async def handle_message(
         or ""
     )
 
-    if contains_bad_words(text_to_check):
+    if contains_bad_words(
+        text_to_check
+    ):
 
         await update.message.reply_text(
-            "⚠️ رسالتك تحتوي على كلمات غير مسموحة وتم رفضها."
+            "⚠️ رسالتك تحتوي على كلمات "
+            "غير مسموحة وتم رفضها."
         )
 
         return
 
     # =====================================================
-    # PUBLIC
+    # PUBLIC MODE
     # =====================================================
 
     if mode == "public":
 
+        # Currently text only
         if update.message.text:
 
             msg = (
-                f"💌 رسالة من المتابع {user_num:02d}\n\n"
+                f"💌 رسالة من المتابع "
+                f"{user_num:02d}\n\n"
                 f"{update.message.text}"
             )
 
-            await context.bot.send_message(
-                chat_id=CHANNEL_USERNAME,
-                text=msg
-            )
+            try:
 
-            await update.message.reply_text(
-                "✅ تم إرسال رسالتك إلى القناة."
-            )
+                channel_msg = (
+                    await context.bot.send_message(
+                        chat_id=CHANNEL_USERNAME,
+                        text=msg
+                    )
+                )
+
+                # -------------------------------------------------
+                # IMPORTANT:
+                # Save channel message ID -> user ID
+                # -------------------------------------------------
+
+                channel_messages[
+                    str(channel_msg.message_id)
+                ] = user_id
+
+                save_json(
+                    CHANNEL_MESSAGES_FILE,
+                    channel_messages
+                )
+
+                # Count messages
+                users[user_id][
+                    "messages"
+                ] = (
+                    users[user_id]
+                    .get("messages", 0)
+                    + 1
+                )
+
+                users[user_id][
+                    "public_messages"
+                ] = (
+                    users[user_id]
+                    .get("public_messages", 0)
+                    + 1
+                )
+
+                save_json(
+                    USERS_FILE,
+                    users
+                )
+
+                await update.message.reply_text(
+                    "✅ تم إرسال رسالتك إلى القناة."
+                )
+
+            except Exception as e:
+
+                logger.exception(e)
+
+                await update.message.reply_text(
+                    "❌ حدث خطأ أثناء إرسال "
+                    "الرسالة إلى القناة."
+                )
 
             return
 
-        # Public media not allowed
         await update.message.reply_text(
-            "❌ في الوضع العام يسمح بإرسال النصوص فقط."
+            "❌ في الوضع العام يسمح "
+            "حاليًا بإرسال النصوص فقط."
         )
 
         return
 
     # =====================================================
-    # PRIVATE
+    # PRIVATE MODE
     # =====================================================
 
     if mode == "private":
@@ -796,99 +1068,140 @@ async def handle_message(
             f"🆔 ID: {user_id}"
         )
 
-        # TEXT
-        if update.message.text:
+        try:
 
-            admin_msg = await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=(
-                    f"{tag}\n\n"
-                    f"💬 رسالة خاصة:\n\n"
-                    f"{update.message.text}"
+            # TEXT
+            if update.message.text:
+
+                admin_msg = (
+                    await context.bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=(
+                            f"{tag}\n\n"
+                            f"💬 رسالة خاصة:\n\n"
+                            f"{update.message.text}"
+                        )
+                    )
                 )
-            )
 
-        # PHOTO
-        elif update.message.photo:
+            # PHOTO
+            elif update.message.photo:
 
-            admin_msg = await context.bot.send_photo(
-                chat_id=ADMIN_ID,
-                photo=update.message.photo[-1].file_id,
-                caption=(
-                    f"{tag}\n\n"
-                    f"📷 صورة من المتابع"
+                admin_msg = (
+                    await context.bot.send_photo(
+                        chat_id=ADMIN_ID,
+                        photo=update.message.photo[-1].file_id,
+                        caption=(
+                            f"{tag}\n\n"
+                            "📷 صورة من المتابع"
+                        )
+                    )
                 )
-            )
 
-        # VIDEO
-        elif update.message.video:
+            # VIDEO
+            elif update.message.video:
 
-            admin_msg = await context.bot.send_video(
-                chat_id=ADMIN_ID,
-                video=update.message.video.file_id,
-                caption=(
-                    f"{tag}\n\n"
-                    f"🎥 فيديو من المتابع"
+                admin_msg = (
+                    await context.bot.send_video(
+                        chat_id=ADMIN_ID,
+                        video=update.message.video.file_id,
+                        caption=(
+                            f"{tag}\n\n"
+                            "🎥 فيديو من المتابع"
+                        )
+                    )
                 )
+
+            # VOICE
+            elif update.message.voice:
+
+                admin_msg = (
+                    await context.bot.send_voice(
+                        chat_id=ADMIN_ID,
+                        voice=update.message.voice.file_id,
+                        caption=tag
+                    )
+                )
+
+            # AUDIO
+            elif update.message.audio:
+
+                admin_msg = (
+                    await context.bot.send_audio(
+                        chat_id=ADMIN_ID,
+                        audio=update.message.audio.file_id,
+                        caption=tag
+                    )
+                )
+
+            # DOCUMENT
+            elif update.message.document:
+
+                admin_msg = (
+                    await context.bot.send_document(
+                        chat_id=ADMIN_ID,
+                        document=update.message.document.file_id,
+                        caption=tag
+                    )
+                )
+
+            else:
+
+                await update.message.reply_text(
+                    "❌ نوع الرسالة غير مدعوم."
+                )
+
+                return
+
+            # -------------------------------------------------
+            # Save admin message -> user
+            # -------------------------------------------------
+
+            message_map[
+                admin_msg.message_id
+            ] = user_id
+
+            private_chat_users[
+                user_id
+            ] = user_num
+
+            # -------------------------------------------------
+            # Count messages
+            # -------------------------------------------------
+
+            users[user_id][
+                "messages"
+            ] = (
+                users[user_id]
+                .get("messages", 0)
+                + 1
             )
 
-        # VOICE
-        elif update.message.voice:
-
-            admin_msg = await context.bot.send_voice(
-                chat_id=ADMIN_ID,
-                voice=update.message.voice.file_id,
-                caption=tag
+            users[user_id][
+                "private_messages"
+            ] = (
+                users[user_id]
+                .get("private_messages", 0)
+                + 1
             )
 
-        # AUDIO
-        elif update.message.audio:
-
-            admin_msg = await context.bot.send_audio(
-                chat_id=ADMIN_ID,
-                audio=update.message.audio.file_id,
-                caption=tag
+            save_json(
+                USERS_FILE,
+                users
             )
-
-        # DOCUMENT
-        elif update.message.document:
-
-            admin_msg = await context.bot.send_document(
-                chat_id=ADMIN_ID,
-                document=update.message.document.file_id,
-                caption=tag
-            )
-
-        else:
 
             await update.message.reply_text(
-                "❌ نوع الرسالة غير مدعوم."
+                "✅ تم إرسال رسالتك للإدارة ❤️"
             )
 
-            return
+        except Exception as e:
 
-        # Save reply mapping
-        message_map[
-            admin_msg.message_id
-        ] = user_id
+            logger.exception(e)
 
-        private_chat_users[
-            user_id
-        ] = user_num
-
-        # Count message
-        users[user_id]["messages"] = (
-            users[user_id].get("messages", 0) + 1
-        )
-
-        save_json(
-            USERS_FILE,
-            users
-        )
-
-        await update.message.reply_text(
-            "✅ تم إرسال رسالتك  ❤️"
-        )
+            await update.message.reply_text(
+                "❌ حدث خطأ أثناء إرسال "
+                "الرسالة للإدارة."
+            )
 
 
 # =========================================================
@@ -900,13 +1213,16 @@ async def list_private_users(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    if not is_admin(update.effective_user.id):
+    if not is_admin(
+        update.effective_user.id
+    ):
         return
 
     if not private_chat_users:
 
         await update.message.reply_text(
-            "لا يوجد مستخدمون في الوضع الخاص حتى الآن."
+            "لا يوجد مستخدمون في الوضع "
+            "الخاص حتى الآن."
         )
 
         return
@@ -931,7 +1247,7 @@ async def list_private_users(
 
 
 # =========================================================
-# CHAT
+# START CHAT
 # =========================================================
 
 async def start_chat(
@@ -939,7 +1255,9 @@ async def start_chat(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    if not is_admin(update.effective_user.id):
+    if not is_admin(
+        update.effective_user.id
+    ):
         return
 
     if not context.args:
@@ -966,9 +1284,9 @@ async def start_chat(
     ] = target_uid
 
     await update.message.reply_text(
-        f"✅ المحادثة مفعلة مع المستخدم:\n"
+        f"✅ تم فتح المحادثة مع المستخدم:\n"
         f"{target_uid}\n\n"
-        "أرسل الآن أي رسالة وستصل إليه."
+        "أرسل الآن."
     )
 
 
@@ -986,11 +1304,17 @@ async def chat_callback(
     if not query:
         return
 
-    if not is_admin(query.from_user.id):
+    if not is_admin(
+        query.from_user.id
+    ):
+
         await query.answer()
+
         return
 
-    if query.data.startswith("chat_"):
+    if query.data.startswith(
+        "chat_"
+    ):
 
         target_uid = query.data.split(
             "_",
@@ -1011,7 +1335,7 @@ async def chat_callback(
 
 
 # =========================================================
-# GET USER LINK
+# GET LINK
 # =========================================================
 
 async def get_user_link(
@@ -1024,6 +1348,10 @@ async def get_user_link(
     if not user:
         return
 
+    if not is_admin(user.id):
+
+        return
+
     if not user.username:
 
         await update.message.reply_text(
@@ -1033,21 +1361,32 @@ async def get_user_link(
         return
 
     await update.message.reply_text(
-        f"🔗 رابط حسابك:\n"
+        "🔗 رابط حسابك:\n"
         f"https://t.me/{user.username}"
     )
 
 
 # =========================================================
-# CHANNEL POST REPLY
+# USER REPLY TO CHANNEL POST BY LINK
 # =========================================================
 
-def extract_channel_message_id(text):
+def extract_channel_message_id(
+    text
+):
 
     if not text:
         return None
 
-    pattern = rf"https://t\.me/{re.escape(CHANNEL_USERNAME.lstrip('@'))}/(\d+)"
+    channel_name = (
+        CHANNEL_USERNAME
+        .lstrip("@")
+    )
+
+    pattern = (
+        rf"https://t\.me/"
+        rf"{re.escape(channel_name)}"
+        rf"/(\d+)"
+    )
 
     match = re.search(
         pattern,
@@ -1057,10 +1396,12 @@ def extract_channel_message_id(text):
     if not match:
         return None
 
-    return int(match.group(1))
+    return int(
+        match.group(1)
+    )
 
 
-async def handle_channel_reply(
+async def handle_channel_link_reply(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
@@ -1071,30 +1412,39 @@ async def handle_channel_reply(
     if not update.message.text:
         return False
 
-    message_text = update.message.text.strip()
+    text = update.message.text.strip()
 
-    msg_id = extract_channel_message_id(
-        message_text
+    message_id = (
+        extract_channel_message_id(
+            text
+        )
     )
 
-    if not msg_id:
+    if not message_id:
         return False
 
-    parts = message_text.split()
+    channel_name = (
+        CHANNEL_USERNAME
+        .lstrip("@")
+    )
 
-    link = None
+    link_pattern = (
+        rf"https://t\.me/"
+        rf"{re.escape(channel_name)}"
+        rf"/\d+"
+    )
 
-    for part in parts:
+    match = re.search(
+        link_pattern,
+        text
+    )
 
-        if f"t.me/{CHANNEL_USERNAME.lstrip('@')}/" in part:
-
-            link = part
-            break
-
-    if not link:
+    if not match:
         return False
 
-    reply_text = message_text.replace(
+    link = match.group(0)
+
+    reply_text = text.replace(
         link,
         ""
     ).strip()
@@ -1107,10 +1457,13 @@ async def handle_channel_reply(
 
         return True
 
-    if contains_bad_words(reply_text):
+    if contains_bad_words(
+        reply_text
+    ):
 
         await update.message.reply_text(
-            "⚠️ الرد يحتوي على كلمات غير مسموحة."
+            "⚠️ الرد يحتوي على كلمات "
+            "غير مسموحة."
         )
 
         return True
@@ -1124,10 +1477,11 @@ async def handle_channel_reply(
         await context.bot.send_message(
             chat_id=CHANNEL_USERNAME,
             text=(
-                f"💬 رد من المتابع {user_num:02d}\n\n"
+                f"💬 رد من المتابع "
+                f"{user_num:02d}\n\n"
                 f"{reply_text}"
             ),
-            reply_to_message_id=msg_id
+            reply_to_message_id=message_id
         )
 
         await update.message.reply_text(
@@ -1157,12 +1511,16 @@ async def message_router(
     if not update.effective_user:
         return
 
-    # Channel-link replies
-    if not is_admin(update.effective_user.id):
+    # المستخدم يرسل ردًا على منشور بالقناة عبر الرابط
+    if not is_admin(
+        update.effective_user.id
+    ):
 
-        handled = await handle_channel_reply(
-            update,
-            context
+        handled = (
+            await handle_channel_link_reply(
+                update,
+                context
+            )
         )
 
         if handled:
@@ -1175,10 +1533,13 @@ async def message_router(
 
 
 # =========================================================
-# HEALTH CHECK
+# HEALTH
 # =========================================================
 
-async def health(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def health(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     await update.message.reply_text(
         "🟢 البوت يعمل بشكل طبيعي."
@@ -1194,7 +1555,8 @@ async def post_init(
 ):
 
     webhook_url = (
-        f"https://{RENDER_EXTERNAL_HOSTNAME}/"
+        f"https://"
+        f"{RENDER_EXTERNAL_HOSTNAME}/"
         f"{BOT_TOKEN}"
     )
 
@@ -1203,7 +1565,7 @@ async def post_init(
     )
 
     logger.info(
-        f"Webhook set: {webhook_url}"
+        f"✅ Webhook set: {webhook_url}"
     )
 
 
@@ -1220,7 +1582,10 @@ def main():
         .build()
     )
 
-    # Commands
+    # =====================================================
+    # COMMANDS
+    # =====================================================
+
     application.add_handler(
         CommandHandler(
             "start",
@@ -1284,7 +1649,11 @@ def main():
         )
     )
 
-    # Chat buttons FIRST
+    # =====================================================
+    # CALLBACKS
+    # =====================================================
+
+    # chat buttons MUST come before general callbacks
     application.add_handler(
         CallbackQueryHandler(
             chat_callback,
@@ -1292,7 +1661,6 @@ def main():
         )
     )
 
-    # Mode buttons
     application.add_handler(
         CallbackQueryHandler(
             handle_button,
@@ -1300,13 +1668,31 @@ def main():
         )
     )
 
-    # Messages
+    # =====================================================
+    # CHANNEL POSTS
+    # =====================================================
+
+    application.add_handler(
+        MessageHandler(
+            filters.UpdateType.CHANNEL_POST,
+            handle_channel_post
+        )
+    )
+
+    # =====================================================
+    # NORMAL MESSAGES
+    # =====================================================
+
     application.add_handler(
         MessageHandler(
             filters.ALL & ~filters.COMMAND,
             message_router
         )
     )
+
+    # =====================================================
+    # START
+    # =====================================================
 
     logger.info(
         "🤖 Bot is starting..."
@@ -1317,14 +1703,15 @@ def main():
         port=PORT,
         url_path=BOT_TOKEN,
         webhook_url=(
-            f"https://{RENDER_EXTERNAL_HOSTNAME}/"
+            f"https://"
+            f"{RENDER_EXTERNAL_HOSTNAME}/"
             f"{BOT_TOKEN}"
         )
     )
 
 
 # =========================================================
-# START
+# RUN
 # =========================================================
 
 if __name__ == "__main__":
