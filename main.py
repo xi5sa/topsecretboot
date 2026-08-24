@@ -1705,7 +1705,7 @@ async def chat_callback(
 
 
 # =========================================================
-# GET LINK
+# GET User LINK
 # =========================================================
 
 async def get_user_link(
@@ -1713,25 +1713,95 @@ async def get_user_link(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    if not is_admin(
-        update.effective_user.id
-    ):
+    # للأدمن فقط
+    if not is_admin(update.effective_user.id):
         return
 
-    user = update.effective_user
+    # يجب كتابة رقم المتابع
+    if not context.args:
+        await update.message.reply_text(
+            "❌ استخدم الأمر بالشكل التالي:\n\n"
+            "/get_link 01\n\n"
+            "مثال:\n"
+            "/get_link 02"
+        )
+        return
 
-    if not user.username:
+    try:
+        target_number = int(context.args[0])
+
+    except ValueError:
+        await update.message.reply_text(
+            "❌ رقم المتابع غير صحيح.\n\n"
+            "مثال:\n"
+            "/get_link 01"
+        )
+        return
+
+    # البحث عن المستخدم صاحب الرقم
+    target_uid = None
+
+    for uid, data in users.items():
+
+        try:
+            user_number = int(
+                data.get("number", 0)
+            )
+
+            if user_number == target_number:
+                target_uid = uid
+                break
+
+        except (ValueError, TypeError):
+            continue
+
+    # الرقم غير موجود
+    if not target_uid:
 
         await update.message.reply_text(
-            "❌ ليس لديك Username."
+            f"❌ لم يتم العثور على المتابع رقم "
+            f"{target_number:02d}."
         )
 
         return
 
-    await update.message.reply_text(
-        f"🔗 رابط حسابك:\n"
-        f"https://t.me/{user.username}"
-    )
+    # الحصول على معلومات الحساب من Telegram
+    try:
+
+        user_info = await context.bot.get_chat(
+            chat_id=int(target_uid)
+        )
+
+    except Exception as e:
+
+        await update.message.reply_text(
+            "❌ تعذر الحصول على معلومات حساب المستخدم."
+        )
+
+        logger.error(
+            f"get_chat error for {target_uid}: {e}"
+        )
+
+        return
+
+    # إذا لديه Username
+    if user_info.username:
+
+        await update.message.reply_text(
+            f"👤 المتابع رقم {target_number:02d}\n\n"
+            f"🔗 رابط الحساب:\n"
+            f"https://t.me/{user_info.username}"
+        )
+
+    else:
+
+        # إذا لا يوجد Username
+        await update.message.reply_text(
+            f"👤 المتابع رقم {target_number:02d}\n\n"
+            f"❌ هذا المستخدم لا يملك Username.\n\n"
+            f"🆔 Telegram ID:\n"
+            f"{target_uid}"
+        )
 
 
 # =========================================================
